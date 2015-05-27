@@ -793,81 +793,72 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
 
         self.assertEquals(expected_format_tag_dict, format_tags)
 
-    def test_disambiguate_format_tags_modifiesMetaheader(self):
-        file_contents1 = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
-        mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
-
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "AF,DP")
-        file_contents2 = ["##metaheader1\n",
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
-        mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "AF,DP")
-
+    def test_disambiguate_format_tags(self):
+        vcf_readers = [MockVcfReader(input_filepath="fileA",
+                                     metaheaders=["##metaheader1\n",
+                                                  '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
+                                                  '##FORMAT=<ID=AF,Number=1,Type=Integer,Description="Allele Frequency">']),
+                       MockVcfReader(input_filepath="fileB",
+                                     metaheaders=["##metaheader1\n",
+                                                  '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'])]
         format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
                               '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">'],
                        "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}
-        merge._disambiguate_format_tags([merge_vcf_reader1, merge_vcf_reader2], format_tags)
+        actual_mapping = merge._disambiguate_format_tags_new(vcf_readers, format_tags)
 
-        self.assertIn('##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Read Depth">',
-                      merge_vcf_reader1.metaheaders)
-        self.assertIn('##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
-                      merge_vcf_reader2.metaheaders)
+        expected_mapping = {"fileA": {"DP": '##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Read Depth">',
+                                      "AF": '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">'},
+                            "fileB": {"DP": '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Approximate Read Depth">'}}
+        self.assertEquals(expected_mapping, actual_mapping)
 
-    def xtest_disambiguate_format_tags_considersDifferentCallers(self):
+    def test_disambiguate_format_tags_considersDifferentCallers(self):
         file_contents1 = ["##metaheader1\n",
                           "##jacquard.translate.caller=MuTect",
                           '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
                           self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|15|87")]
         mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
-
+        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "DP")
+ 
         file_contents2 = ["##metaheader1\n",
                           "##jacquard.translate.caller=VarScan",
                           '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
                           self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|75|65")]
         mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
+        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "DP")
+ 
+        format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="[MuTect]: Read Depth">',
+                              '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="[VarScan]: Read Depth">']}
 
-        format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
-                              '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">']}
-        merge._disambiguate_format_tags([merge_vcf_reader1, merge_vcf_reader2], format_tags)
+        actual_mapping = merge._disambiguate_format_tags_new([merge_vcf_reader1, merge_vcf_reader2],
+                                                         format_tags)
 
-        self.assertIn('##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="[MuTect]: Read Depth">',
-                      merge_vcf_reader1.metaheaders)
-        self.assertIn('##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="[VarScan]: Read Depth">',
-                      merge_vcf_reader2.metaheaders)
+        expected_mapping = {"fileA.txt": {"DP": '##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="[MuTect]: Read Depth">'},
+                            "fileB.txt": {"DP": '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="[VarScan]: Read Depth">'}}
+        self.assertEquals(expected_mapping, actual_mapping)
 
-    def test_disambiguate_format_tags_modifiesRecords(self):
-        file_contents1 = ["##metaheader1\n",
-                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|Normal|Tumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|AF:DP|0.2:34|0.1:54")]
-        mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
+    def test_disambiguate_format_tags_multipleAmbiguousTags(self):
+        vcf_readers = [MockVcfReader(input_filepath="fileA",
+                                     metaheaders=["##metaheader1\n",
+                                                  '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
+                                                  '##FORMAT=<ID=AF,Number=1,Type=Integer,Description="Approximate Allele Frequency">']),
+                       MockVcfReader(input_filepath="fileB",
+                                     metaheaders=["##metaheader1\n",
+                                                  '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
+                                                  '##FORMAT=<ID=AF,Number=1,Type=Integer,Description="Allele Frequency">'])]
+        format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
+                              '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'],
+                       "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Approximate Allele Frequency">',
+                              '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}
+        actual_mapping = merge._disambiguate_format_tags_new(vcf_readers, format_tags)
 
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
-        file_contents2 = ["##metaheader1\n",
-                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate Read Depth">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|Normal|Tumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|DP|12|76")]
-        mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
+        expected_mapping = {"fileA": {"DP": '##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
+                                      "AF": '##FORMAT=<ID=JX1_AF,Number=A,Type=Float,Description="Approximate Allele Frequency">'},
+                            "fileB": {"DP": '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Read Depth">',
+                                      "AF": '##FORMAT=<ID=JX2_AF,Number=A,Type=Float,Description="Allele Frequency">'}}
 
-        format_tags = {"JQ_DP": ['##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">',
-                              '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate Read Depth">'],
-                       "JQ_AF": ['##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">']}
-        merge._disambiguate_format_tags([merge_vcf_reader1, merge_vcf_reader2], format_tags)
-
-        self.assertEquals({"JQ_DP": "JX1_JQ_DP", "JQ_AF": "JQ_AF"}, merge_vcf_reader1.format_tags)
-        self.assertEquals({"JQ_DP": "JX2_JQ_DP"}, merge_vcf_reader2.format_tags)
+        self.assertEquals(expected_mapping, actual_mapping)
 
 
     def test_build_coordinates(self):
@@ -1177,7 +1168,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                                      b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample_C\tSample_D\n"
                                      b"chr2\t32\t.\tA\tT\t.\t.\t.\tDP\t24\t53\n"))
             input_files = [vcf.FileReader(fileA), vcf.FileReader(fileB)]
-            vcf_readers = merge._create_vcf_readers(input_files, False)
+            vcf_readers = merge._create_merge_vcf_readers(input_files, False)
 
             for vcf_reader in vcf_readers:
                 vcf_reader.close()

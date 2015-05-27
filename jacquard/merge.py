@@ -365,12 +365,12 @@ def _alter_description(metaheader, caller_name):
                   r'\g<0>[%s]: ' % caller_name,
                   metaheader)
 
-def _get_format_tags(merge_vcf_readers):
+def _get_format_tags(vcf_readers):
     format_tags = defaultdict(list)
     caller_names = defaultdict(list)
-    for merge_vcf_reader in merge_vcf_readers:
-        caller_name = _get_caller_name(merge_vcf_reader)
-        for tag, metahdr in list(merge_vcf_reader.format_metaheaders.items()):
+    for vcf_reader in vcf_readers:
+        caller_name = _get_caller_name(vcf_reader)
+        for tag, metahdr in list(vcf_reader.format_metaheaders.items()):
             format_tags[tag].append(metahdr)
             caller_names[tag].append(caller_name)
 
@@ -384,6 +384,26 @@ def _get_format_tags(merge_vcf_readers):
 
     return format_tags
 
+#TODO: rename
+def _disambiguate_format_tags_new(vcf_readers, format_tags):
+    format_tag_mapping = {}
+    for i, vcf_reader in enumerate(vcf_readers):
+        format_tag_mapping[vcf_reader.file_name] = {}
+        for tag, metaheaders in list(format_tags.items()):
+            if tag in vcf_reader.format_metaheaders:
+                if len(metaheaders) > 1:
+                    new_tag = "JX{}_{}".format(i+1, tag)
+                    metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
+                                                r'\g<1>%s' % new_tag,
+                                                metaheaders[i])
+                    format_tag_mapping[vcf_reader.file_name][tag] = metaheader
+                else:
+                    metaheader = metaheaders[0]
+                    format_tag_mapping[vcf_reader.file_name][tag] = metaheader
+
+    return format_tag_mapping
+
+#TODO: remove
 def _disambiguate_format_tags(merge_vcf_readers, format_tags):
     for tag, metaheaders in list(format_tags.items()):
         for merge_vcf_reader in merge_vcf_readers:
@@ -439,8 +459,13 @@ def _compile_metaheaders(incoming_headers,
 def _write_metaheaders(file_writer, all_headers):
     file_writer.write("\n".join(all_headers) + "\n")
 
-def _create_vcf_readers(file_readers, specified_regex):
+def _create_merge_vcf_readers(file_readers, specified_regex):
     merge_vcf_readers = []
+    vcf_readers = [vcf.VcfReader(i) for i in file_readers]
+
+    format_tags = _get_format_tags(vcf_readers)
+#     format_tag_mapping = _disambiguate_format_tags_new(vcf_readers,
+#                                                        format_tags)
     for file_reader in file_readers:
         merge_vcf_reader = MergeVcfReader(file_reader, specified_regex)
         merge_vcf_readers.append(merge_vcf_reader)
@@ -819,7 +844,7 @@ def execute(args, execution_context):
 #and _build_contigs behave differently. It seems like we could make the
 #signatures of these methods more similar or even combine some methods to
 #reduce excess iterations over the coordinates/vcf_readers
-        merge_vcf_readers = _create_vcf_readers(file_readers, format_tag_regex)
+        merge_vcf_readers = _create_merge_vcf_readers(file_readers, format_tag_regex)
         _validate_consistent_input(merge_vcf_readers, args.include_all)
         _validate_consistent_samples(merge_vcf_readers)
         merge_vcf_readers = _sort_readers(merge_vcf_readers,
