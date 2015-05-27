@@ -658,25 +658,23 @@ def _build_writers_to_readers(vcf_readers, output_path):
 
     return writers_to_readers
 
-def _get_readers_per_patient(file_readers):
+def _get_readers_per_patient(vcf_readers):
     readers_per_patient = defaultdict(list)
-    for file_reader in file_readers:
-        file_reader.open()
-        patient = file_reader.file_name.split(".")[0]
-        for line in file_reader.read_lines():
-            caller_meta_header = "##jacquard.translate.caller"
-            if line.startswith(caller_meta_header):
-                readers_per_patient[patient].append(line.split("=")[1])
-        file_reader.close()
+    for vcf_reader in vcf_readers:
+        patient = vcf_reader.file_name.split(".")[0]
+        for metaheader in vcf_reader.metaheaders:
+            if metaheader.startswith("##jacquard.translate.caller"):
+                readers_per_patient[patient].append(metaheader.split("=")[1])
 
     return OrderedDict(sorted(readers_per_patient.items()))
 
-def _validate_consistent_samples(file_readers):
-    readers_per_patient = _get_readers_per_patient(file_readers)
+def _validate_consistent_samples(vcf_readers):
+    readers_per_patient = _get_readers_per_patient(vcf_readers)
 
     all_callers = set()
     for callers in readers_per_patient.values():
         all_callers.update(callers)
+
     warning = 0
     for patient, callers in readers_per_patient.items():
         missing_callers = set(all_callers).difference(set(callers))
@@ -812,7 +810,6 @@ def execute(args, execution_context):
 
     input_files = sorted(glob.glob(os.path.join(input_path, "*.vcf")))
     file_readers = [vcf.FileReader(i) for i in input_files]
-    _validate_consistent_samples(file_readers)
 
     try:
         file_writer = vcf.FileWriter(output_path)
@@ -824,6 +821,7 @@ def execute(args, execution_context):
 #reduce excess iterations over the coordinates/vcf_readers
         merge_vcf_readers = _create_vcf_readers(file_readers, format_tag_regex)
         _validate_consistent_input(merge_vcf_readers, args.include_all)
+        _validate_consistent_samples(merge_vcf_readers)
         merge_vcf_readers = _sort_readers(merge_vcf_readers,
                                           output_path,
                                           format_tag_regex)

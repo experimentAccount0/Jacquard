@@ -579,19 +579,19 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                 self.assertFalse("[{}] not found in {}".format(key, row_help))
 
     def test_validate_consistent_samples_missingCaller(self):
-        input_files = [MockFileReader("A.mutect.vcf",
-                                      ["##jacquard.translate.caller=MuTect"]),
-                       MockFileReader("A.strelka.vcf",
-                                      ["##jacquard.translate.caller=Strelka"]),
-                       MockFileReader("A.varscan.vcf",
-                                      ["##jacquard.translate.caller=VarScan"]),
-                       MockFileReader("B.strelka.vcf",
-                                      ["##jacquard.translate.caller=Strelka"]),
-                       MockFileReader("B.varscan.vcf",
-                                      ["##jacquard.translate.caller=VarScan"]),
-                       MockFileReader("C.varscan.vcf",
-                                      ["##jacquard.translate.caller=VarScan"])]
-        merge._validate_consistent_samples(input_files)
+        vcf_readers = [MockVcfReader(input_filepath="A.mutect.vcf",
+                                     metaheaders=["##jacquard.translate.caller=MuTect"]),
+                       MockVcfReader(input_filepath="A.strelka.vcf",
+                                     metaheaders=["##jacquard.translate.caller=Strelka"]),
+                       MockVcfReader(input_filepath="A.varscan.vcf",
+                                     metaheaders=["##jacquard.translate.caller=VarScan"]),
+                       MockVcfReader(input_filepath="B.strelka.vcf",
+                                     metaheaders=["##jacquard.translate.caller=Strelka"]),
+                       MockVcfReader(input_filepath="B.varscan.vcf",
+                                     metaheaders=["##jacquard.translate.caller=VarScan"]),
+                       MockVcfReader(input_filepath="C.varscan.vcf",
+                                     metaheaders=["##jacquard.translate.caller=VarScan"])]
+        merge._validate_consistent_samples(vcf_readers)
 
         actual_log_warnings = test.utils.mock_logger.messages["WARNING"]
         expected_log_warnings = ["Sample [B] is missing VCF(s): ['MuTect']",
@@ -600,13 +600,13 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         self.assertEquals(expected_log_warnings, actual_log_warnings)
 
     def test_validate_consistent_samples_allMissingCallers(self):
-        input_files = [MockFileReader("A.mutect.vcf",
-                                      ["##jacquard.translate.caller=MuTect"]),
-                       MockFileReader("B.strelka.vcf",
-                                      ["##jacquard.translate.caller=Strelka"]),
-                       MockFileReader("C.mutect.vcf",
-                                      ["##jacquard.translate.caller=MuTect"])]
-        merge._validate_consistent_samples(input_files)
+        vcf_readers = [MockVcfReader(input_filepath="A.mutect.vcf",
+                                     metaheaders=["##jacquard.translate.caller=MuTect"]),
+                       MockVcfReader(input_filepath="B.strelka.vcf",
+                                     metaheaders=["##jacquard.translate.caller=Strelka"]),
+                       MockVcfReader(input_filepath="C.mutect.vcf",
+                                     metaheaders=["##jacquard.translate.caller=MuTect"])]
+        merge._validate_consistent_samples(vcf_readers)
 
         actual_log_warnings = test.utils.mock_logger.messages["WARNING"]
         expected_log_warnings = ["Sample [A] is missing VCF(s): ['Strelka']",
