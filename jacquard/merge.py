@@ -98,8 +98,14 @@ class _BufferedReader(object):
             return None
 
 class MergeVcfReader(vcf.VcfReader):
-    def __init__(self, file_reader):
+    def __init__(self, file_reader, specified_regex=None):
         super(self.__class__,self).__init__(file_reader)
+
+        if specified_regex:
+            self.format_tag_regexes = specified_regex.split(',')
+        else:
+            self.format_tag_regexes = _DEFAULT_INCLUDED_FORMAT_TAGS
+
         self.format_tags = {}
 
     def modify_metaheader(self, original_metaheader, transformed_tag):
@@ -114,8 +120,20 @@ class MergeVcfReader(vcf.VcfReader):
     def store_format_tags(self, original_tag, new_tag):
         self.format_tags[original_tag] = new_tag
 
+    def _get_format_tag_subset(self, vcf_record):
+        new_sample_tag_values = OrderedDict()
+        for sample, tag_values in list(vcf_record.sample_tag_values.items()):
+            new_sample_tag_values[sample] = {}
+            for tag, value in list(tag_values.items()):
+                for regex in self.format_tag_regexes:
+                    if re.match(regex, tag):
+                        new_sample_tag_values[sample][tag] = value
+        vcf_record.sample_tag_values = new_sample_tag_values
+
+        return vcf_record
+
     @staticmethod
-    def modify_format_tag(vcf_record, format_tags):
+    def _modify_format_tag(vcf_record, format_tags):
         for tags in list(vcf_record.sample_tag_values.values()):
             for original_tag, new_tag in list(format_tags.items()):
                 if new_tag not in tags and original_tag in tags:
@@ -151,7 +169,8 @@ class MergeVcfReader(vcf.VcfReader):
                 continue
             vcf_record = vcf.VcfRecord.parse_record(line, sample_names)
             if format_tags:
-                vcf_record = self.modify_format_tag(vcf_record, format_tags)
+                vcf_record = self._get_format_tag_subset(vcf_record)
+                vcf_record = self._modify_format_tag(vcf_record, format_tags)
             yield vcf_record
 
 
