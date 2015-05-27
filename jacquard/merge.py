@@ -134,7 +134,7 @@ class MergeVcfReader(vcf.VcfReader):
                    "format tags. Review inputs/usage and try again")
             raise utils.UsageError(msg, self.format_tag_regexes)
                        
-        return format_tag_list
+        return sorted(format_tag_list)
 
     def _get_metaheader_subset(self):
         def _handle_format_metaheaders(metaheader):

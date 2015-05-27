@@ -57,7 +57,7 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
         file_reader = MockFileReader("A.mutect.vcf", file_contents)
         merge_vcf_reader = merge.MergeVcfReader(file_reader, ".*")
 
-        self.assertEquals(["DP", "AF"], merge_vcf_reader.desired_format_tags)
+        self.assertEquals(["AF", "DP"], merge_vcf_reader.desired_format_tags)
 
     def test_gets_desired_format_tags_warnsIfUnusedRegex(self):
         file_contents = ["##metaheader1\n",
