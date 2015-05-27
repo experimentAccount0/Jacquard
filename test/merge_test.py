@@ -29,9 +29,18 @@ class MockBufferedReader(object):
         return next(self.vcf_records_iter)
 
 class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
+    def setUp(self):
+        super(MergeVcfReaderTestCase, self).setUp()
+        merge.logger = test.utils.mock_logger
+
+    def tearDown(self):
+        test.utils.mock_logger.reset()
+        merge.logger = jacquard.utils.logger
+        super(MergeVcfReaderTestCase, self).tearDown()
+
     def test_extends_vcf_readers(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|DP|32|78")]
         file_reader = MockFileReader("A.mutect.vcf", file_contents)
@@ -39,10 +48,49 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
 
         self.assertEquals(merge_vcf_reader._file_reader, file_reader)
 
-    def test_stores_format_tags_to_keep_default(self):
+    def test_gets_desired_format_tags(self):
         file_contents = ["##metaheader1\n",
                          '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">\n',
                          '##FORMAT=<ID=AF,Number=1,Type=Integer,Description="Allele Frequency">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|DP|32|78")]
+        file_reader = MockFileReader("A.mutect.vcf", file_contents)
+        merge_vcf_reader = merge.MergeVcfReader(file_reader, ".*")
+
+        self.assertEquals(["DP", "AF"], merge_vcf_reader.desired_format_tags)
+
+    def test_gets_desired_format_tags_warnsIfUnusedRegex(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
+        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
+        dummy = merge.MergeVcfReader(mock_file_reader, "GT.*,DP.*")
+
+        actual_log_warnings = test.utils.mock_logger.messages["WARNING"]
+        expected_warning = "In the specified list of regexes ['GT.*', 'DP.*'], the regex [GT.*] does not match any format tags; this expression may be irrelevant."
+
+        self.assertIn(expected_warning, actual_log_warnings)
+
+    def test_gets_desired_format_tags_raisesErrorIfExcludeAll(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
+        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
+
+        self.assertRaisesRegexp(utils.UsageError,
+                                "The specified format tag regex \[.*\] would exclude all format tags. Review inputs/usage and try again",
+                                merge.MergeVcfReader,
+                                mock_file_reader,
+                                "FOO.*")
+
+    def test_stores_format_tags_to_keep_default(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=1,Type=Integer,Description="Allele Frequency">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|DP|32|78")]
         file_reader = MockFileReader("A.mutect.vcf", file_contents)
@@ -63,37 +111,24 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
 
         self.assertEquals([specified_regex], merge_vcf_reader.format_tag_regexes)
 
-    def test_stores_format_tags_to_keep_userSpecifiedSplitsIntoList(self):
-        file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate read depth (reads with MQ=255 or with bad mates are filtered)">\n',
-                         '##FORMAT=<ID=AF,Number=1,Type=Integer,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=GT,Number=1,Type=Integer,Description="Allele Frequency">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|DP|32|78")]
-        file_reader = MockFileReader("A.mutect.vcf", file_contents)
-        specified_regex = "^DP$,^AF$"
-        merge_vcf_reader = merge.MergeVcfReader(file_reader, specified_regex)
-
-        self.assertEquals(["^DP$", "^AF$"], merge_vcf_reader.format_tag_regexes)
-
     def test_modify_metaheader(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
         merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
 
-        original_metaheader = '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'
+        original_metaheader = '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">'
         transformed_tag = "JX1_DP"
 
-        self.assertIn('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
+        self.assertIn('##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
 
         merge_vcf_reader.modify_metaheader(original_metaheader, transformed_tag)
 
         self.assertIn('##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
-        self.assertNotIn('##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
+        self.assertNotIn('##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
 
     def test_get_format_tag_subset_defaultTagRegex(self):
         file_contents = ["##metaheader1\n",
@@ -124,6 +159,57 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
 
         self.assertEquals(set(["AF"]), new_vcf_record.format_tags)
 
+    def test_get_metaheader_subset_default(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
+        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
+        merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
+
+        self.assertEquals(3, len(merge_vcf_reader.metaheaders))
+        self.assertIn('##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">', merge_vcf_reader.metaheaders)
+        self.assertIn('##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
+        self.assertEquals({"JQ_DP": '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">',
+                           "JQ_AF": '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">'},
+                          merge_vcf_reader.format_metaheaders)
+
+    def test_get_metaheader_subset_userSpecified(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
+        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
+        merge_vcf_reader = merge.MergeVcfReader(mock_file_reader, ".*DP")
+
+        self.assertEquals(2, len(merge_vcf_reader.metaheaders))
+        self.assertNotIn('##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">', merge_vcf_reader.metaheaders)
+        self.assertIn('##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
+        self.assertEquals({"JQ_DP": '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">'},
+                          merge_vcf_reader.format_metaheaders)
+
+    def test_get_metaheader_subset_keepsValidMetaheaders(self):
+        file_contents = ["##metaheader1\n",
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##INFO=<ID=FOO,Number=1,Type=Integer,Description="FOO">\n',
+                         '##FILTER=<ID=PASS,Number=1,Type=Integer,Description="Pass">\n',
+                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
+        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
+        merge_vcf_reader = merge.MergeVcfReader(mock_file_reader, ".*DP")
+
+        self.assertEquals(4, len(merge_vcf_reader.metaheaders))
+        self.assertNotIn('##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">', merge_vcf_reader.metaheaders)
+        self.assertIn("##metaheader1", merge_vcf_reader.metaheaders)
+        self.assertIn('##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">', merge_vcf_reader.metaheaders)
+        self.assertIn('##INFO=<ID=FOO,Number=1,Type=Integer,Description="FOO">', merge_vcf_reader.metaheaders)
+        self.assertIn('##FILTER=<ID=PASS,Number=1,Type=Integer,Description="Pass">', merge_vcf_reader.metaheaders)
+        self.assertEquals({"JQ_DP": '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">'},
+                          merge_vcf_reader.format_metaheaders)
+
     def test_modify_format_tags(self):
         file_contents = ["##metaheader1\n",
                          '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
@@ -131,7 +217,7 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
-        merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
+        merge_vcf_reader = merge.MergeVcfReader(mock_file_reader, "AF,DP")
 
         format_tags = {"DP": "JX1_DP"}
         vcf_record = MockVcfRecord("chr1", "245", "A", "G", vcf_format="AF:DP", samples=["0.2:21", "0.34:56"])
@@ -146,23 +232,23 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
 
     def test_modify_format_tags_inconsistentFormatTags(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|AF:DP|NORMAL|TUMOR"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|AF:DP:GT|NORMAL|TUMOR")]
+                         self.entab("chr2|1|.|A|C|.|.|INFO|JQ_AF:JQ_DP|NORMAL|TUMOR"),
+                         self.entab("chr2|1|.|A|C|.|.|INFO|JQ_AF:JQ_DP:JQ_GT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
         merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
 
-        format_tags = {"DP": "JX1_DP", "GT": "GT"}
-        vcf_record = MockVcfRecord("chr1", "245", "A", "G", vcf_format="AF:DP", samples=["0.2:21", "0.34:56"])
+        format_tags = {"JQ_DP": "JX1_DP", "JQ_GT": "GT"}
+        vcf_record = MockVcfRecord("chr1", "245", "A", "G", vcf_format="JQ_AF:JQ_DP", samples=["0.2:21", "0.34:56"])
 
-        self.assertEquals(OrderedDict({0: {"AF": "0.2", "DP": "21"}, 1: {"AF": "0.34", "DP": "56"}}),
+        self.assertEquals(OrderedDict({0: {"JQ_AF": "0.2", "JQ_DP": "21"}, 1: {"JQ_AF": "0.34", "JQ_DP": "56"}}),
                           vcf_record.sample_tag_values)
 
         merge_vcf_reader._modify_format_tag(vcf_record, format_tags)
 
-        self.assertEquals(OrderedDict({0: {"AF": "0.2", "JX1_DP": "21"}, 1: {"AF": "0.34", "JX1_DP": "56"}}),
+        self.assertEquals(OrderedDict({0: {"JQ_AF": "0.2", "JX1_DP": "21"}, 1: {"JQ_AF": "0.34", "JX1_DP": "56"}}),
                           vcf_record.sample_tag_values)
 
     def test_vcf_records_modifiesFormatTags_onlyKeepsSubset(self):
@@ -189,18 +275,18 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
 
     def test_store_unambiguous_format_tags(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|AF:DP|0.2:21|0.34:56")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
         merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
 
-        original_tag = "DP"
+        original_tag = "JQ_DP"
         new_tag = "JX1_DP"
 
         merge_vcf_reader.store_format_tags(original_tag, new_tag)
-        self.assertEquals({"DP": "JX1_DP"}, merge_vcf_reader.format_tags)
+        self.assertEquals({"JQ_DP": "JX1_DP"}, merge_vcf_reader.format_tags)
 
 class FilterTestCase(test_case.JacquardBaseTestCase):
     def setUp(self):
@@ -592,8 +678,8 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
     def test_get_caller_name(self):
         file_contents = ["##metaheader1\n",
                          "##jacquard.translate.caller=MuTect",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
@@ -605,8 +691,8 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
 
     def test_get_caller_name_noCallerDefined(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
@@ -628,19 +714,19 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         args = Namespace(include_all=False, tags=False)
         actual_regex = merge._get_format_tag_regex(args)
 
-        self.assertEquals(merge._DEFAULT_INCLUDED_FORMAT_TAGS, actual_regex)
+        self.assertEquals(False, actual_regex)
 
     def test_get_format_tag_regex_specifiedValue(self):
         args = Namespace(include_all=False, tags="^FOO.*,BAR.*")
         actual_regex = merge._get_format_tag_regex(args)
 
-        self.assertEquals(["^FOO.*", "BAR.*"], actual_regex)
+        self.assertEquals("^FOO.*,BAR.*", actual_regex)
 
     def test_get_format_tag_regex_includeAll(self):
         args = Namespace(include_all=True, tags=False)
         actual_regex = merge._get_format_tag_regex(args)
 
-        self.assertEquals([".*"], actual_regex)
+        self.assertEquals(".*", actual_regex)
 
     def test_get_format_tag_regex_raisesError(self):
         args = Namespace(include_all=True, tags=True)
@@ -651,16 +737,16 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
 
     def test_get_format_tags(self):
         file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
         merge_vcf_reader = merge.MergeVcfReader(mock_file_reader)
 
         format_tags = merge._get_format_tags([merge_vcf_reader])
-        expected_format_tag_dict = {"AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">'],
-                                    "DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">']}
+        expected_format_tag_dict = {"JQ_AF": ['##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">'],
+                                    "JQ_DP": ['##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">']}
 
         self.assertEquals(expected_format_tag_dict, format_tags)
 
@@ -671,7 +757,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                           self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|15|87")]
         mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
+        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "DP")
 
         file_contents2 = ["##metaheader1\n",
                           "##jacquard.translate.caller=VarScan",
@@ -679,7 +765,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                           self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|75|65")]
         mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
+        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "DP")
 
         format_tags = merge._get_format_tags([merge_vcf_reader1, merge_vcf_reader2])
         expected_format_tag_dict = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="[MuTect]: Read Depth">',
@@ -693,14 +779,14 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader1 = MockFileReader("my_dir/my_file.txt", file_contents1)
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
+        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "DP")
 
         file_contents2 = ["##metaheader1\n",
                          '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader2 = MockFileReader("my_dir/my_file.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
+        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "DP")
 
         format_tags = merge._get_format_tags([merge_vcf_reader1, merge_vcf_reader2])
         expected_format_tag_dict = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">']}
@@ -715,13 +801,13 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
 
-        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
+        merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "AF,DP")
         file_contents2 = ["##metaheader1\n",
                          '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
         mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
-        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
+        merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "AF,DP")
 
         format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
                               '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">'],
@@ -761,27 +847,27 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
 
     def test_disambiguate_format_tags_modifiesRecords(self):
         file_contents1 = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
+                         '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|Normal|Tumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|AF:DP|0.2:34|0.1:54")]
         mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
 
         merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1)
         file_contents2 = ["##metaheader1\n",
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">\n',
+                         '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate Read Depth">\n',
                          self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|Normal|Tumor\n"),
                          self.entab("chr2|1|.|A|C|.|.|INFO|DP|12|76")]
         mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
         merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2)
 
-        format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
-                              '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">'],
-                       "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}
+        format_tags = {"JQ_DP": ['##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Read Depth">',
+                              '##FORMAT=<ID=JQ_DP,Number=1,Type=Integer,Description="Approximate Read Depth">'],
+                       "JQ_AF": ['##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">']}
         merge._disambiguate_format_tags([merge_vcf_reader1, merge_vcf_reader2], format_tags)
 
-        self.assertEquals({"DP": "JX1_DP", "AF": "AF"}, merge_vcf_reader1.format_tags)
-        self.assertEquals({"DP": "JX2_DP"}, merge_vcf_reader2.format_tags)
+        self.assertEquals({"JQ_DP": "JX1_JQ_DP", "JQ_AF": "JQ_AF"}, merge_vcf_reader1.format_tags)
+        self.assertEquals({"JQ_DP": "JX2_JQ_DP"}, merge_vcf_reader2.format_tags)
 
 
     def test_build_coordinates(self):
@@ -861,27 +947,6 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         expected = [fileA_rec2, fileB_rec1]
         self.assertEquals(expected, actual_multalts)
 
-    def test_build_merged_record_onlyKeepJQTags(self):
-        OD = OrderedDict
-        coordinate = VcfRecord("chr1", "1", "A", "C", info="baseInfo")
-        samples1 = OD({"SD": {"JQ_foo":"bar1",
-                              "blahJQ_": "bar2"},
-                       "SC": {"JQ_foo":"bar3",
-                              "blah":"bar4"}})
-        samples2 = OD({"SB": {"JQ_foo":"bar5"},
-                       "SA": {"JQ_foo":"bar6"}})
-        record1 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples1)
-        record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
-
-        sample_list = ["SA", "SB", "SC", "SD"]
-        tags_to_keep = ["JQ_foo", "JQ_foo"]
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list, tags_to_keep)
-
-        self.assertEquals(OD([("JQ_foo", "bar6")]), actual_record.sample_tag_values["SA"])
-        self.assertEquals(OD([("JQ_foo", "bar5")]), actual_record.sample_tag_values["SB"])
-        self.assertEquals(OD([("JQ_foo", "bar3")]), actual_record.sample_tag_values["SC"])
-        self.assertEquals(OD([("JQ_foo", "bar1")]), actual_record.sample_tag_values["SD"])
-
     def test_build_merged_record_redundantPatientNames(self):
         OD = OrderedDict
         coordinate = VcfRecord("chr1", "1", "A", "C", info="baseInfo")
@@ -893,8 +958,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
 
         sample_list = ["PA|NORMAL", "PA|TUMOR"]
-        tags_to_keep = {"JQ_vs": "JQ_vs", "JQ_mt": "JQ_mt"}
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list, tags_to_keep)
+        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list)
 
         self.assertEquals(OD([("JQ_mt", "3"), ("JQ_vs", "1")]), actual_record.sample_tag_values["PA|NORMAL"])
         self.assertEquals(OD([("JQ_mt", "4"), ("JQ_vs", "2")]), actual_record.sample_tag_values["PA|TUMOR"])
@@ -910,8 +974,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
 
         sample_list = ["SD", "SA", "SC", "SB"]
-        tags_to_keep = ["foo"]
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list, tags_to_keep)
+        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list)
 
         self.assertEquals(sample_list, list(actual_record.sample_tag_values.keys()))
 
@@ -923,8 +986,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record1 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples1)
 
         sample_list = ["SA", "SB", "SC", "SD"]
-        tags_to_keep = ["foo"]
-        actual_record = merge._build_merged_record(coordinate, [record1], sample_list, tags_to_keep)
+        actual_record = merge._build_merged_record(coordinate, [record1], sample_list)
 
         self.assertEquals(sample_list, list(actual_record.sample_tag_values.keys()))
 
@@ -938,7 +1000,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record1 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples1)
         record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
 
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], [], [])
+        actual_record = merge._build_merged_record(coordinate, [record1, record2], [])
 
         self.assertEquals("chr1", actual_record.chrom)
         self.assertEquals("1", actual_record.pos)
@@ -961,8 +1023,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
 
         sample_list = ["SA", "SB", "SC", "SD"]
-        tags_to_keep = ["foo", "bar"]
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list, tags_to_keep)
+        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list)
 
         self.assertEquals(OD([("bar", "A2"), ("foo", "A1")]), actual_record.sample_tag_values["SA"])
         self.assertEquals(OD([("bar", "B2"), ("foo", "B1")]), actual_record.sample_tag_values["SB"])
@@ -984,8 +1045,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         record2 = VcfRecord("chr1", "1", "A", "C", sample_tag_values=samples2)
 
         sample_list = ["SA", "SB", "SC", "SD"]
-        tags_to_keep = ["foo", "bar", "baz"]
-        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list, tags_to_keep)
+        actual_record = merge._build_merged_record(coordinate, [record1, record2], sample_list)
 
         self.assertEquals("chr1", actual_record.chrom)
         self.assertEquals("1", actual_record.pos)
@@ -1015,14 +1075,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                        MockVcfReader(input_filepath="fileB.vcf",
                                      records=[record2])]
         all_sample_names = ["SA", "SB", "SC", "SD"]
-        format_tags_to_keep = ["foo"]
         file_writer = MockFileWriter()
 
         merge._merge_records(vcf_readers,
                              coordinates,
                              filter_strategy,
                              all_sample_names,
-                             format_tags_to_keep,
                              file_writer)
 
         expected_record = "chrom\tpos\t.\tref\talt\t.\t.\t.\tfoo\tA\tB\tC\tD"
@@ -1110,14 +1168,16 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         with TempDirectory() as input_dir:
             fileA = input_dir.write("fileA.vcf",
                                     (b"##source=strelka\n"
+                                     b'##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n'
                                      b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample_A\tSample_B\n"
                                      b"chr1\t31\t.\tA\tT\t.\t.\t.\tDP\t23\t52\n"))
             fileB = input_dir.write("fileB.vcf",
                                     (b"##source=strelka\n"
+                                     b'##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n'
                                      b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSample_C\tSample_D\n"
                                      b"chr2\t32\t.\tA\tT\t.\t.\t.\tDP\t24\t53\n"))
             input_files = [vcf.FileReader(fileA), vcf.FileReader(fileB)]
-            vcf_readers = merge._create_vcf_readers(input_files)
+            vcf_readers = merge._create_vcf_readers(input_files, False)
 
             for vcf_reader in vcf_readers:
                 vcf_reader.close()
@@ -1187,88 +1247,6 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         actual_tags = merge._build_info_tags(records)
         self.assertEquals([], actual_tags)
 
-    def test_build_format_tags_includesModifiedFormatTags(self):
-        meta_headers1 = ['##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Read Depth">',
-                        '##FORMAT=<ID=FA,Number=A,Type=Float,Description="Allele fraction of the alternate allele with regard to reference">']
-        vcf_reader1 = MockVcfReader(metaheaders=meta_headers1)
-        meta_headers2 = ['##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Read Depth">']
-        vcf_reader2 = MockVcfReader(metaheaders=meta_headers2)
-
-        vcf_reader1.store_format_tags("DP", "JX1_DP")
-        vcf_reader1.store_format_tags("FA", "FA")
-        vcf_reader2.store_format_tags("DP", "JX2_DP")
-
-        vcf_readers = [vcf_reader1, vcf_reader2]
-        actual_format_tags = merge._build_format_tags(["^DP$", "^FA$"], vcf_readers)
-        expected_format_tags = ["FA", "JX1_DP", "JX2_DP"]
-
-        self.assertEquals(expected_format_tags, actual_format_tags)
-
-    def test_build_format_tags_sameDescriptionOkay(self):
-        meta_headers = ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
-                        '##FORMAT=<ID=FA,Number=A,Type=Float,Description="Allele fraction of the alternate allele with regard to reference">']
-        vcf_reader1 = MockVcfReader(metaheaders=meta_headers)
-        vcf_reader2 = MockVcfReader(metaheaders=['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'])
-
-        vcf_reader1.store_format_tags("DP", "DP")
-        vcf_reader1.store_format_tags("FA", "FA")
-        vcf_reader2.store_format_tags("DP", "DP")
-
-        actual_format_tags = merge._build_format_tags([".*"], [vcf_reader1, vcf_reader2])
-        expected_format_tags = ["DP", "FA"]
-
-        self.assertEquals(expected_format_tags, actual_format_tags)
-
-    def test_build_format_tags_filtersAndSorts(self):
-        meta_headers = ['##FORMAT=<ID=JQ1>',
-                        '##FORMAT=<ID=JQ2>',
-                        '##FORMAT=<ID=JQ3>']
-        vcf_reader = MockVcfReader(metaheaders=meta_headers)
-        vcf_reader.store_format_tags("JQ1", "JQ1")
-        vcf_reader.store_format_tags("JQ2", "JQ2")
-        vcf_reader.store_format_tags("JQ3", "JQ3")
-
-        format_tags = merge._build_format_tags(["JQ[12]"], [vcf_reader])
-
-        self.assertEquals(["JQ1", "JQ2"], format_tags)
-
-    def test_build_format_tags_uniqueSetAcrossMultipleReaders(self):
-        reader1 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ1>'])
-        reader2 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ2>', '##FORMAT=<ID=JQ3>'])
-        reader3 = MockVcfReader(metaheaders=['##INFO=<ID=JQ4>'])
-
-        reader1.store_format_tags("JQ1", "JQ1")
-        reader2.store_format_tags("JQ2", "JQ2")
-        reader2.store_format_tags("JQ3", "JQ3")
-        reader3.store_format_tags("JQ4", "JQ4")
-
-        format_tags = merge._build_format_tags(["JQ[123]"], [reader1, reader2, reader3])
-
-        self.assertEquals(["JQ1", "JQ2", "JQ3"], format_tags)
-
-    def test_build_format_tags_errorIfExcludesAllTags(self):
-        reader1 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ1>'])
-        reader2 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ2>'])
-
-        self.assertRaisesRegexp(utils.JQException,
-                                r"The specified format tag regex \[.*\] would exclude all format tags. Review inputs/usage and try again",
-                                merge._build_format_tags,
-                                ["foo"],
-                                [reader1, reader2])
-
-    def test_build_format_tags_warnIfRegexNotFoundInFile(self):
-        reader1 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ1>'])
-        reader2 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ2>'])
-
-        reader1.store_format_tags("JQ1", "JQ1")
-        reader2.store_format_tags("JQ2", "JQ2")
-
-        dummy = merge._build_format_tags(["JQ[123]", "foo"], [reader1, reader2])
-        actual_log_warnings = test.utils.mock_logger.messages["WARNING"]
-        #pylint: disable=anomalous-backslash-in-string
-        expected_log_warnings = "In the specified list of regexes \[.*\], the regex \[.*\] does not match any format tags; this expression may be irrelevant."
-        self.assertRegexpMatches(actual_log_warnings[0], expected_log_warnings)
-
     def test_build_contigs(self):
         records = [VcfRecord("1", "42", "A", "C"),
                    VcfRecord("4", "42", "A", "C"),
@@ -1284,36 +1262,32 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1]
         all_sample_names = []
         contigs_to_keep = []
-        format_tags_to_keep = []
         info_tags_to_keep = []
         existing_metaheaders = ["##existing1", "##existing2"]
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
-        self.assertEquals(3, len(actual_metaheaders))
+        self.assertEquals(4, len(actual_metaheaders))
         metaheaders_iter = iter(actual_metaheaders)
         self.assertEquals("##existing1", next(metaheaders_iter))
         self.assertEquals("##existing2", next(metaheaders_iter))
+        self.assertEquals("##FORMAT=<ID=JQ1>", next(metaheaders_iter))
         self.assertRegexpMatches(next(metaheaders_iter), "^#CHROM")
 
     def test_compile_metaheaders_retainsFormatMetaheaders(self):
         reader1 = MockVcfReader(metaheaders=['##FORMAT=<ID=JQ1,Description="JQA">',
-                                             '##FORMAT=<ID=JQ2,Description="JQB">',
                                              '##FORMAT=<ID=JQ3,Description="JQC">'])
         vcf_readers = [reader1]
         all_sample_names = []
         contigs_to_keep = []
-        format_tags_to_keep = ["JQ1", "JQ3"]
         info_tags_to_keep = []
         existing_metaheaders = []
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
         self.assertEquals(3, len(actual_metaheaders))
         metaheaders_iter = iter(actual_metaheaders)
@@ -1328,14 +1302,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1]
         all_sample_names = []
         contigs_to_keep = []
-        format_tags_to_keep = []
         info_tags_to_keep = ["JQ1", "JQ3", merge._MULT_ALT_TAG]
         existing_metaheaders = []
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
         self.assertEquals(4, len(actual_metaheaders))
         metaheaders_iter = iter(actual_metaheaders)
@@ -1352,14 +1324,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1]
         all_sample_names = []
         contigs_to_keep = ["chr1", "chr2", "chr11"]
-        format_tags_to_keep = []
         info_tags_to_keep = []
         existing_metaheaders = []
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
 
         self.assertEquals(4, len(actual_metaheaders))
@@ -1374,14 +1344,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1]
         all_sample_names = []
         contigs_to_keep = ["chr1", "chr2", "chr11"]
-        format_tags_to_keep = []
         info_tags_to_keep = []
         existing_metaheaders = []
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
 
         self.assertEquals(1, len(actual_metaheaders))
@@ -1393,14 +1361,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1]
         all_sample_names = ["SA", "SB"]
         contigs_to_keep = []
-        format_tags_to_keep = []
         info_tags_to_keep = []
         existing_metaheaders = []
         actual_metaheaders = merge._compile_metaheaders(existing_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
         self.assertEquals(1, len(actual_metaheaders))
         metaheaders_iter = iter(actual_metaheaders)
@@ -1413,14 +1379,12 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
         vcf_readers = [reader1, reader2]
         all_sample_names = []
         contigs_to_keep = []
-        format_tags_to_keep = ["JQ1"]
         info_tags_to_keep = ["JQ2"]
         incoming_metaheaders = ["##foo"]
         actual_metaheaders = merge._compile_metaheaders(incoming_metaheaders,
                                                         vcf_readers,
                                                         all_sample_names,
                                                         contigs_to_keep,
-                                                        format_tags_to_keep,
                                                         info_tags_to_keep)
         self.assertEquals(4, len(actual_metaheaders))
         metaheaders_iter = iter(actual_metaheaders)
@@ -1540,35 +1504,44 @@ chr2|1|.|A|C|.|.|INFO|JQ_Foo:JQ_Bar1|A_3_1:A_3_2|B_3_1:B_3_2
         input_readers = [vcf_readerA, vcf_readerB]
         with TempDirectory() as temp_dir:
             actual_readers = merge._sort_readers(list(input_readers),
-                                                 temp_dir.path)
+                                                 temp_dir.path,
+                                                 False)
 
             self.assertEquals(actual_readers, input_readers)
 
     def test_sort_readers_unsortedReturnsMergeVcfReader(self):
+        metaheaders =['##FORMAT=<ID=JQ_Bar,Number=1,Type=Float,Description="bar">',
+                      '##FORMAT=<ID=JQ_Foo,Number=1,Type=Float,Description="foo">']
         record1 = vcf.VcfRecord("chr1", "42", "A", "C")
         record2 = vcf.VcfRecord("chr3", "42", "A", "C")
         record3 = vcf.VcfRecord("chr2", "42", "A", "C")
-        vcf_readerA = MockVcfReader(records=[record1, record2, record3])
-        vcf_readerB = MockVcfReader(records=[record1, record2, record3])
+        vcf_readerA = MockVcfReader(metaheaders = metaheaders,
+                                    records=[record1, record2, record3])
+        vcf_readerB = MockVcfReader(metaheaders = metaheaders,
+                                    records=[record1, record2, record3])
 
         input_readers = [vcf_readerA, vcf_readerB]
         with TempDirectory() as temp_dir:
             actual_readers = merge._sort_readers(list(input_readers),
-                                                 temp_dir.path)
+                                                 temp_dir.path,
+                                                 False)
 
             self.assertEquals("MergeVcfReader", type(actual_readers[0]).__name__)
             self.assertEquals("MergeVcfReader", type(actual_readers[1]).__name__)
 
     def test_sort_readers_vcfsResortedAsNecessary(self):
         #pylint: disable=too-many-locals
+        metaheaders =['##FORMAT=<ID=JQ_Bar,Number=1,Type=Float,Description="bar">',
+                      '##FORMAT=<ID=JQ_Foo,Number=1,Type=Float,Description="foo">']
         record1 = vcf.VcfRecord("chr1", "42", "A", "C")
         record2 = vcf.VcfRecord("chr2", "42", "A", "C")
         record3 = vcf.VcfRecord("chr3", "42", "A", "C")
-        vcf_readerA = MockVcfReader(records=[record1, record2, record3])
-        input_metaheaders = ["##foo", "##bar"]
+        vcf_readerA = MockVcfReader(metaheaders=metaheaders,
+                                   records=[record1, record2, record3])
+
         input_column_header = self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SX|SY")
         vcf_readerB = MockVcfReader(input_filepath="unsorted.vcf",
-                                    metaheaders=input_metaheaders,
+                                    metaheaders=metaheaders,
                                     column_header=input_column_header,
                                     records=[record3, record1, record2])
 
@@ -1577,7 +1550,8 @@ chr2|1|.|A|C|.|.|INFO|JQ_Foo:JQ_Bar1|A_3_1:A_3_2|B_3_1:B_3_2
             temp_dir.write("foo.vcf", b"foo\nbar")
             output_filepath = os.path.join(temp_dir.path, "foo.vcf")
             actual_readers = merge._sort_readers(list(input_readers),
-                                                 output_filepath)
+                                                 output_filepath,
+                                                 None)
 
             self.assertNotEquals(actual_readers, input_readers)
             self.assertIn(vcf_readerA, actual_readers)
@@ -1591,7 +1565,7 @@ chr2|1|.|A|C|.|.|INFO|JQ_Foo:JQ_Bar1|A_3_1:A_3_2|B_3_1:B_3_2
             actual_readerB.close()
 
 
-        self.assertEquals(input_metaheaders, actual_metaheaders)
+        self.assertEquals(metaheaders, actual_metaheaders)
         self.assertEquals(input_column_header, actual_column_header)
         self.assertEquals(record1.text(), actual_records[0].text())
         self.assertEquals(record2.text(), actual_records[1].text())

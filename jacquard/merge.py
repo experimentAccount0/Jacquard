@@ -107,6 +107,50 @@ class MergeVcfReader(vcf.VcfReader):
             self.format_tag_regexes = _DEFAULT_INCLUDED_FORMAT_TAGS
 
         self.format_tags = {}
+        self.desired_format_tags = self._get_desired_format_tags()
+        self.metaheaders = self._get_metaheader_subset()
+
+    def _get_desired_format_tags(self):
+        format_tag_list = []
+        regexes_used = set()
+
+        for tag in self.format_metaheaders: 
+            for regex in self.format_tag_regexes:
+                if re.match(regex, tag):
+                    format_tag_list.append(tag)
+                    regexes_used.add(regex)
+
+        unused_regexes = set(self.format_tag_regexes).difference(regexes_used)
+
+        if unused_regexes:
+            for unused_regex in unused_regexes:
+                msg = ("In the specified list of regexes {}, the regex [{}] "
+                       "does not match any format tags; this expression may be "
+                       "irrelevant.")
+            logger.warning(msg, self.format_tag_regexes, unused_regex)
+
+        if len(format_tag_list)==0:
+            msg = ("The specified format tag regex [{}] would exclude all "
+                   "format tags. Review inputs/usage and try again")
+            raise utils.UsageError(msg, self.format_tag_regexes)
+                       
+        return format_tag_list
+
+    def _get_metaheader_subset(self):
+        def _handle_format_metaheaders(metaheader):
+            for tag, format_metaheader in self.format_metaheaders.items():
+                if metaheader == format_metaheader:
+                    if tag in self.desired_format_tags:
+                        desired_metaheaders.append(metaheader)
+
+        desired_metaheaders = []
+        for metaheader in self.metaheaders:
+            if metaheader in self.format_metaheaders.values():
+                _handle_format_metaheaders(metaheader)
+            else:
+                desired_metaheaders.append(metaheader)
+
+        return desired_metaheaders
 
     def modify_metaheader(self, original_metaheader, transformed_tag):
         updated_metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
@@ -122,12 +166,13 @@ class MergeVcfReader(vcf.VcfReader):
 
     def _get_format_tag_subset(self, vcf_record):
         new_sample_tag_values = OrderedDict()
+
         for sample, tag_values in list(vcf_record.sample_tag_values.items()):
             new_sample_tag_values[sample] = {}
             for tag, value in list(tag_values.items()):
-                for regex in self.format_tag_regexes:
-                    if re.match(regex, tag):
-                        new_sample_tag_values[sample][tag] = value
+                if tag in self.desired_format_tags:
+                    new_sample_tag_values[sample][tag] = value
+
         vcf_record.sample_tag_values = new_sample_tag_values
 
         return vcf_record
@@ -356,36 +401,10 @@ def _disambiguate_format_tags(merge_vcf_readers, format_tags):
 
     return format_tags
 
-def _build_format_tags(format_tag_regex, vcf_readers):
-    retained_tags = set()
-    regexes_used = set()
-
-    for vcf_reader in vcf_readers:
-        for tag_regex in format_tag_regex:
-            for original_tag, new_tag in list(vcf_reader.format_tags.items()):
-                if re.match(tag_regex + "$", original_tag):
-                    retained_tags.add(new_tag)
-                    regexes_used.add(tag_regex)
-
-    if len(retained_tags) == 0:
-        msg = ("The specified format tag regex [{}] would exclude all format "
-               "tags. Review inputs/usage and try again")
-        raise utils.JQException(msg, format_tag_regex)
-
-    unused_regexes = set(format_tag_regex).difference(regexes_used)
-    if unused_regexes:
-        for unused_regex in unused_regexes:
-            msg = ("In the specified list of regexes {}, the regex [{}] does "
-                   "not match any format tags; this expression may be "
-                   "irrelevant.")
-            logger.warning(msg, format_tag_regex, unused_regex)
-    return sorted(list(retained_tags))
-
 def _compile_metaheaders(incoming_headers,
                          vcf_readers,
                          all_sample_names,
                          contigs_to_keep,
-                         format_tags_to_keep,
                          info_tags_to_keep):
     #pylint: disable=too-many-arguments
     ordered_metaheaders = list(incoming_headers)
@@ -405,7 +424,8 @@ def _compile_metaheaders(incoming_headers,
             ordered_metaheaders.append(all_contig_metaheaders[contig_id])
     for tag in info_tags_to_keep:
         ordered_metaheaders.append(all_info_metaheaders[tag])
-    for tag in format_tags_to_keep:
+
+    for tag in all_format_metaheaders:
         ordered_metaheaders.append(all_format_metaheaders[tag])
 
     sorted_metaheaders = utils.sort_metaheaders(ordered_metaheaders)
@@ -419,11 +439,10 @@ def _compile_metaheaders(incoming_headers,
 def _write_metaheaders(file_writer, all_headers):
     file_writer.write("\n".join(all_headers) + "\n")
 
-def _create_vcf_readers(file_readers):
+def _create_vcf_readers(file_readers, specified_regex):
     merge_vcf_readers = []
     for file_reader in file_readers:
-#         vcf_reader = vcf.VcfReader(file_reader)
-        merge_vcf_reader = MergeVcfReader(file_reader)
+        merge_vcf_reader = MergeVcfReader(file_reader, specified_regex)
         merge_vcf_readers.append(merge_vcf_reader)
 
     return merge_vcf_readers
@@ -473,7 +492,7 @@ def _write_headers(reader, file_writer):
 
     file_writer.write("\n".join(headers) + "\n")
 
-def _sort_vcf(reader, sorted_dir):
+def _sort_vcf(reader, sorted_dir, specified_regex):
     vcf_records = []
     reader.open()
     for vcf_record in reader.vcf_records():
@@ -490,7 +509,8 @@ def _sort_vcf(reader, sorted_dir):
         writer.write(vcf_record.text())
 
     writer.close()
-    reader = MergeVcfReader(vcf.FileReader(writer.output_filepath))
+    reader = MergeVcfReader(vcf.FileReader(writer.output_filepath),
+                            specified_regex)
     return reader
 
 def _get_unsorted_readers(vcf_readers):
@@ -516,7 +536,7 @@ def _get_unsorted_readers(vcf_readers):
         reader.close()
     return unsorted_readers
 
-def _sort_readers(vcf_readers, output_path):
+def _sort_readers(vcf_readers, output_path, specified_regex):
     unsorted_readers = _get_unsorted_readers(vcf_readers)
     sorted_readers = []
     unsorted_count = 0
@@ -532,15 +552,14 @@ def _sort_readers(vcf_readers, output_path):
                         reader.file_name,
                         unsorted_count,
                         len(unsorted_readers))
-            reader = _sort_vcf(reader, sorted_dir)
+            reader = _sort_vcf(reader, sorted_dir, specified_regex)
         sorted_readers.append(reader)
     return sorted_readers
 
 
 def _build_merged_record(coordinate,
                          vcf_records,
-                         all_sample_names,
-                         tags_to_keep):
+                         all_sample_names):
 
     all_tags = set()
     sparse_matrix = {}
@@ -550,9 +569,8 @@ def _build_merged_record(coordinate,
             if sample not in sparse_matrix:
                 sparse_matrix[sample] = {}
             for tag, value in list(tags.items()):
-                if tag in tags_to_keep:
-                    all_tags.add(tag)
-                    sparse_matrix[sample][tag] = value
+                all_tags.add(tag)
+                sparse_matrix[sample][tag] = value
 
     full_matrix = OrderedDict()
     for sample in all_sample_names:
@@ -686,17 +704,15 @@ def _validate_consistent_input(vcf_readers, include_all):
                 untranslated_readers.append(vcf_reader)
     
         if translated and untranslated:
-            msg = ("Some input VCFs [{}] were not translated by Jacquard. Review "
-                   "input and/or use --included_all flag")\
-                   .format(untranslated_readers)
-            raise utils.UsageError(msg)
+            msg = ("Some input VCFs [{}] were not translated by Jacquard. "
+                   "Review input and/or use --included_all flag")
+            raise utils.UsageError(msg, untranslated_readers)
 
 
 def _merge_records(vcf_readers,
                    coordinates,
                    filter_strategy,
                    all_sample_names,
-                   format_tags_to_keep,
                    file_writer):
     #pylint: disable=too-many-arguments
     row_count = 0
@@ -711,8 +727,7 @@ def _merge_records(vcf_readers,
         if vcf_records:
             merged_record = _build_merged_record(coordinate,
                                                  vcf_records,
-                                                 all_sample_names,
-                                                 format_tags_to_keep)
+                                                 all_sample_names)
             file_writer.write(merged_record.text())
 
         row_count += 1
@@ -733,11 +748,9 @@ def _get_format_tag_regex(args):
         raise utils.UsageError(msg)
 
     if args.include_all:
-        format_tag_regex = ['.*']
-    elif args.tags:
-        format_tag_regex = args.tags.split(",")
+        format_tag_regex = '.*'
     else:
-        format_tag_regex = _DEFAULT_INCLUDED_FORMAT_TAGS
+        format_tag_regex = args.tags
 
     return format_tag_regex
 
@@ -809,13 +822,13 @@ def execute(args, execution_context):
 #and _build_contigs behave differently. It seems like we could make the
 #signatures of these methods more similar or even combine some methods to
 #reduce excess iterations over the coordinates/vcf_readers
-        merge_vcf_readers = _create_vcf_readers(file_readers)
+        merge_vcf_readers = _create_vcf_readers(file_readers, format_tag_regex)
         _validate_consistent_input(merge_vcf_readers, args.include_all)
-        merge_vcf_readers = _sort_readers(merge_vcf_readers, output_path)
+        merge_vcf_readers = _sort_readers(merge_vcf_readers,
+                                          output_path,
+                                          format_tag_regex)
         format_tags = _get_format_tags(merge_vcf_readers)
         _disambiguate_format_tags(merge_vcf_readers, format_tags)
-        format_tags_to_keep = _build_format_tags(format_tag_regex,
-                                                 merge_vcf_readers)
         (all_sample_names,
          merge_metaheaders) = _build_sample_list(merge_vcf_readers)
 
@@ -827,7 +840,6 @@ def execute(args, execution_context):
                                        merge_vcf_readers,
                                        all_sample_names,
                                        contigs_to_keep,
-                                       format_tags_to_keep,
                                        info_tags_to_keep)
 
         _write_metaheaders(file_writer, headers)
@@ -836,7 +848,6 @@ def execute(args, execution_context):
                        coordinates,
                        filter_strategy,
                        all_sample_names,
-                       format_tags_to_keep,
                        file_writer)
     finally:
         for vcf_reader in merge_vcf_readers:
