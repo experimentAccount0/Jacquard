@@ -34,6 +34,15 @@ class VcfReader(object):
 
         return tag_dict
 
+    @classmethod
+    def get_id_from_metaheader(cls, metaheader):
+        tag = re.match("^##.*=.*?[<,]ID=([^,>]*)", metaheader)
+        if tag:
+            return tag.group(1)
+        else:
+            msg = "VCF metaheader is missing ID tag [{}]"
+            raise utils.JQException(msg, metaheader)
+
     @property
     def file_name(self):
         return self._file_reader.file_name

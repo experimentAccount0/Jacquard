@@ -28,6 +28,42 @@ class MockBufferedReader(object):
     def next_if_equals(self, dummy):
         return next(self.vcf_records_iter)
 
+class TagRegistryTestCase(test_case.JacquardBaseTestCase):
+    def test_register_tag(self):
+        registry = merge.TagRegistry()
+        actual_tag_id = registry.register_tag('DP',
+                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        self.assertEquals("JX1_DP", actual_tag_id)
+
+        actual_tag_id = registry.register_tag('AF',
+                                              '##FORMAT=<ID=AF,Descrpition="thing1">')
+
+        self.assertEquals("JX2_AF", actual_tag_id)
+
+    def test_register_tag_returnsPreviousTagId(self):
+        registry = merge.TagRegistry()
+        actual_tag_id = registry.register_tag('DP',
+                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        self.assertEquals("JX1_DP", actual_tag_id)
+
+        actual_tag_id = registry.register_tag('DP',
+                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+
+        self.assertEquals("JX1_DP", actual_tag_id)
+
+    def test_register_tag_passthroughJacquardTags(self):
+        registry = merge.TagRegistry()
+        actual_tag_id = registry.register_tag('JQ_AF_XX',
+                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        self.assertEquals("JQ_AF_XX", actual_tag_id)
+
+    def test_register_tag_passthroughNonFormatTags(self):
+        registry = merge.TagRegistry()
+        actual_tag_id = registry.register_tag('FOO',
+                                              '##INFO=<ID=FOO,Descrpition="thing1">')
+        self.assertEquals("FOO", actual_tag_id)
+
+
 #TODO: rename
 class NewMergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
     def setUp(self):

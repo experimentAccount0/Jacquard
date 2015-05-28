@@ -97,6 +97,28 @@ class _BufferedReader(object):
         except StopIteration:
             return None
 
+class TagRegistry(object):
+    def __init__(self):
+        self.metaheaders = {}
+
+
+    @staticmethod
+    def _passthrough(tag_id, metaheader):
+        return tag_id.startswith('JQ_') or \
+                   not metaheader.startswith('##FORMAT=<')
+
+    def register_tag(self, tag_id, metaheader):
+        if self._passthrough(tag_id, metaheader):
+            new_tag_id = tag_id
+        else:
+            if metaheader not in self.metaheaders:
+                new_tag = 'JX{}_{}'.format(len(self.metaheaders) + 1, tag_id)
+                self.metaheaders[metaheader] = new_tag
+
+            new_tag_id = self.metaheaders[metaheader]
+        return new_tag_id
+
+
 class NewMergeVcfReader(vcf.VcfReader):
     def __init__(self, file_reader, format_tag_mapping):
         super(self.__class__,self).__init__(file_reader)

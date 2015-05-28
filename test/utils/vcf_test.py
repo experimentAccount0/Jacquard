@@ -622,6 +622,29 @@ class VcfReaderTestCase(test_case.JacquardBaseTestCase):
         self.output.close()
         sys.stderr = self.saved_stderr
 
+    def test_get_id_from_metaheader(self):
+        actual_id = VcfReader.get_id_from_metaheader('##FORMAT=<ID=FOO>')
+        self.assertEqual("FOO", actual_id)
+        actual_id = VcfReader.get_id_from_metaheader('##blah=<ID=FOO>')
+        self.assertEqual("FOO", actual_id)
+        actual_id = VcfReader.get_id_from_metaheader('##blah=<ID=FOO,This=That>')
+        self.assertEqual("FOO", actual_id)
+        actual_id = VcfReader.get_id_from_metaheader('##blah=<This=That,ID=FOO>')
+        self.assertEqual("FOO", actual_id)
+        actual_id = VcfReader.get_id_from_metaheader('##blah=<This=That,ID=FOO,Mine=Yours>')
+        self.assertEqual("FOO", actual_id)
+
+    def test_get_id_from_metaheader_malformedMetaheaderTakesLastId(self):
+        actual_id = VcfReader.get_id_from_metaheader('##blah=<ID=FOO,ID=BAR,ID=BAZ>')
+        self.assertEqual("BAZ", actual_id)
+
+    def test_get_id_from_metaheader_missingIdRaisesException(self):
+        metaheader = '##blah=<This=That,Mine=Yours>'
+        self.assertRaisesRegexp(utils.JQException,
+                                r"VCF metaheader is missing ID tag \[##blah=<This=That,Mine=Yours>\]",
+                                VcfReader.get_id_from_metaheader,
+                                metaheader)
+
     def test_init(self):
         file_contents = ["##metaheader1\n",
                          "##metaheader2\n",
