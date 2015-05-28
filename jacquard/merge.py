@@ -29,7 +29,7 @@
 """
 from __future__ import print_function, absolute_import, division
 
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, Counter
 import glob
 import os
 import re
@@ -393,9 +393,8 @@ def _alter_description(metaheader, caller_name):
                   r'\g<0>[%s]: ' % caller_name,
                   metaheader)
 
+#TODO: remove
 def _get_format_tag_distribution(vcf_readers, specified_regex):
-    #TODO: add logic from _get_format_tag_regex closer to this method (?)
-    #that will eliminate the need to do this check
     if type(specified_regex) != list:
         msg = ("Unable to process regular expression [{}]. It must be a list "
                "of regular expressions")
@@ -450,25 +449,57 @@ def _get_format_tags(vcf_readers):
 
     return format_tags
 
+def _get_format_tags_per_reader(vcf_readers):
+    format_tags_dict = {}
+    for vcf_reader in vcf_readers:
+        sorted_tags = sorted(vcf_reader.format_metaheaders.keys())
+        format_tags_dict[vcf_reader.file_name] = sorted_tags
+
+    return format_tags_dict
+
 #TODO: rename
-def _disambiguate_format_tags_new(format_tag_distribution):
+def _create_format_tag_mapping(vcf_readers):
+    format_tags_dict = _get_format_tags_per_reader(vcf_readers)
+
+    all_values = []
+    for tags in format_tags_dict.values():
+        all_values.extend(tags)
+
+    format_tag_counts = Counter(all_values)
+    ambiguous_tags = [i for i in format_tag_counts if format_tag_counts[i] > 1]
+
     count = 0
-    unambiguous_distribution = defaultdict(list)
-    for tag, metaheaders in format_tag_distribution.items():
-        if len(metaheaders) > 1:
-            for metaheader in metaheaders:
+    reader_tag_mapping = defaultdict(dict)
+    for reader, format_tags in format_tags_dict.items():
+        for format_tag in format_tags:
+            if format_tag in ambiguous_tags:
                 count += 1
-                new_tag = "JX{}_{}".format(count, tag)
-                metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
-                                    r'\g<1>{}'.format(new_tag),
-                                    metaheader)
-                unambiguous_distribution[tag].append(metaheader)
-        else:
-            unambiguous_distribution[tag] = metaheaders
+                new_tag = 'JX{}_{}'.format(count, format_tag)
+                reader_tag_mapping[reader][format_tag] = new_tag
+            else:
+                reader_tag_mapping[reader][format_tag] = format_tag
+    return reader_tag_mapping
 
-    ordered_distribution = OrderedDict(sorted(unambiguous_distribution.items()))
 
-    return ordered_distribution
+#TODO: remove
+# def _disambiguate_format_tags_new(format_tag_distribution):
+#     count = 0
+#     unambiguous_distribution = defaultdict(list)
+#     for tag, metaheaders in format_tag_distribution.items():
+#         if len(metaheaders) > 1:
+#             for metaheader in metaheaders:
+#                 count += 1
+#                 new_tag = "JX{}_{}".format(count, tag)
+#                 metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
+#                                     r'\g<1>{}'.format(new_tag),
+#                                     metaheader)
+#                 unambiguous_distribution[tag].append(metaheader)
+#         else:
+#             unambiguous_distribution[tag] = metaheaders
+#  
+#     ordered_distribution = OrderedDict(sorted(unambiguous_distribution.items()))
+#  
+#     return ordered_distribution
 
 #TODO: remove
 def _disambiguate_format_tags(merge_vcf_readers, format_tags):
@@ -528,9 +559,9 @@ def _write_metaheaders(file_writer, all_headers):
 
 def _create_merge_vcf_readers(file_readers, specified_regex):
     vcf_readers = [vcf.VcfReader(i) for i in file_readers]
-    format_tag_distribution = _get_format_tag_distribution(vcf_readers,
-                                                           specified_regex)
-    format_tag_mapping = _disambiguate_format_tags_new(format_tag_distribution)
+#     format_tag_distribution = _get_format_tag_distribution(vcf_readers,
+#                                                            specified_regex)
+#     format_tag_mapping = _disambiguate_format_tags_new(format_tag_distribution)
 
     merge_vcf_readers = []
 

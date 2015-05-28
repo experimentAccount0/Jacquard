@@ -105,30 +105,6 @@ class NewMergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
                                 merge.NewMergeVcfReader,
                                 mock_file_reader,
                                 format_tag_mapping)
-
-    def xtest_modify_format_tags(self):
-        file_contents = ["##metaheader1\n",
-                         '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">\n',
-                         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
-                         self.entab("#CHROM|POS|ID|REF|ALT|QUAL|FILTER|INFO|FORMAT|SampleNormal|SampleTumor\n"),
-                         self.entab("chr2|1|.|A|C|.|.|INFO|FORMAT|NORMAL|TUMOR")]
-        mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
-        format_tag_mapping = OrderedDict(sorted({"AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">'],
-                                                 "DP": ['##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Read Depth">',
-                                                        '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Read Depth">']}.items()))
-
-        merge_vcf_reader = merge.NewMergeVcfReader(mock_file_reader, format_tag_mapping)
-
-        vcf_record = MockVcfRecord("chr1", "245", "A", "G", vcf_format="AF:DP", samples=["0.2:21", "0.34:56"])
-
-        self.assertEquals(OrderedDict({0: {"AF": "0.2", "DP": "21"}, 1: {"AF": "0.34", "DP": "56"}}),
-                          vcf_record.sample_tag_values)
-
-        merge_vcf_reader._modify_format_tag(vcf_record)
-
-        self.assertEquals(OrderedDict({0: {"AF": "0.2", "JX1_DP": "21"}, 1: {"AF": "0.34", "JX1_DP": "56"}}),
-                          vcf_record.sample_tag_values)
-
 #TODO: remove
 class MergeVcfReaderTestCase_LEGACY(test_case.JacquardBaseTestCase):
     def setUp(self):
@@ -837,6 +813,25 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                                 merge._get_format_tag_regex,
                                 args)
 
+    def test_get_format_tags_per_reader(self):
+        metaheaders1 = ["##metaheader1",
+                        '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">',
+                        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">']
+        vcf_reader1 = MockVcfReader(input_filepath="fileA",
+                                    metaheaders=metaheaders1)
+
+        metaheaders2 = ["##metaheader1",
+                        '##FORMAT=<ID=AF,Number=A,Type=Float,Description="Approximate Allele Frequency">',
+                        '##FORMAT=<ID=GT,Number=1,Type=Integer,Description="Genotype>']
+        vcf_reader2 = MockVcfReader(input_filepath="fileB",
+                                    metaheaders=metaheaders2)
+
+        format_tags = merge._get_format_tags_per_reader([vcf_reader1, vcf_reader2])
+
+        self.assertEquals(2, len(format_tags))
+        self.assertEquals(["AF", "DP"], format_tags["fileA"])
+        self.assertEquals(["AF", "GT"], format_tags["fileB"])
+
     def test_get_format_tag_distribution(self):
         file_contents1 = ["##metaheader1\n",
                           '##FORMAT=<ID=JQ_AF,Number=A,Type=Float,Description="Allele Frequency">\n',
@@ -1054,36 +1049,6 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
 
         self.assertEquals(expected_format_tag_dict, format_tags)
 
-    def test_disambiguate_format_tags(self):
-        format_tag_distribution = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
-                                          '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'],
-                                   "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}
-        actual_mapping = merge._disambiguate_format_tags_new(format_tag_distribution)
-
-        expected_mapping = {"DP": ['##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
-                                       '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Read Depth">'],
-                            "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}
-
-        self.assertEquals(expected_mapping, actual_mapping)
-
-    def test_disambiguate_format_tags_orderRetained(self):
-        format_tag_distribution = OrderedDict(sorted({"GT": ['##FORMAT=<ID=GT,Number=A,Type=Float,Description="Genotype">',
-                                                             '##FORMAT=<ID=GT,Number=A,Type=Float,Description="Approximate Genotype">'],
-                                                      "DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
-                                                             '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">'],
-                                                      "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">']}.items()))
-        actual_mapping = merge._disambiguate_format_tags_new(format_tag_distribution)
-
-        expected_mapping = OrderedDict(sorted({"DP": ['##FORMAT=<ID=JX1_DP,Number=1,Type=Integer,Description="Approximate Read Depth">',
-                                                      '##FORMAT=<ID=JX2_DP,Number=1,Type=Integer,Description="Read Depth">'],
-                                               "AF": ['##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">'],
-                                               "GT": ['##FORMAT=<ID=JX3_GT,Number=A,Type=Float,Description="Genotype">',
-                                                      '##FORMAT=<ID=JX4_GT,Number=A,Type=Float,Description="Approximate Genotype">']}.items()))
-
-        self.assertEquals(expected_mapping, actual_mapping)
-        self.assertEquals("AF", actual_mapping.keys()[0])
-        self.assertEquals("DP", actual_mapping.keys()[1])
-        self.assertEquals("GT", actual_mapping.keys()[2])
 
     def test_build_coordinates(self):
         fileArec1 = vcf.VcfRecord("chr1", "1", "A", "C")
