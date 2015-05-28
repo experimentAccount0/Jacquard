@@ -97,12 +97,38 @@ class _BufferedReader(object):
         except StopIteration:
             return None
 
+class NewMergeVcfReader(vcf.VcfReader):
+    def __init__(self, file_reader, format_tag_mapping):
+        super(self.__class__,self).__init__(file_reader)
+
+        self.format_tag_mapping = format_tag_mapping
+        self.metaheaders = self._modify_metaheaders()
+
+    def _modify_metaheaders(self):
+        new_list = []
+
+        input_format_tags = self.format_metaheaders.keys()
+        if set(input_format_tags) != set(self.format_tag_mapping.keys()):
+            raise utils.JQException('Unable to create MergeVcfReader. '
+                                    'Transformed format tag metaheaders differ '
+                                    'from input format tag metaheaders.')
+
+        for metaheader in self.metaheaders:
+            if metaheader in self.format_metaheaders.values():
+                for tag, format_metaheader in self.format_metaheaders.items():
+                    if metaheader == format_metaheader:
+                        new_list.extend(self.format_tag_mapping[tag])
+            else:
+                new_list.append(metaheader)
+
+        return new_list
+
 class MergeVcfReader(vcf.VcfReader):
     def __init__(self, file_reader, specified_regex=None):
         super(self.__class__,self).__init__(file_reader)
 
         if specified_regex:
-            self.format_tag_regexes = specified_regex.split(',')
+            self.format_tag_regexes = specified_regex
         else:
             self.format_tag_regexes = _DEFAULT_INCLUDED_FORMAT_TAGS
 
@@ -367,6 +393,44 @@ def _alter_description(metaheader, caller_name):
                   r'\g<0>[%s]: ' % caller_name,
                   metaheader)
 
+def _get_format_tag_distribution(vcf_readers, specified_regex):
+    #TODO: add logic from _get_format_tag_regex closer to this method (?)
+    #that will eliminate the need to do this check
+    if type(specified_regex) != list:
+        msg = ("Unable to process regular expression [{}]. It must be a list "
+               "of regular expressions")
+        raise utils.JQException(msg, specified_regex)
+
+    format_tag_distribution = defaultdict(list)
+    regexes_used = set()
+
+    for vcf_reader in vcf_readers:
+        for tag, metaheader in list(vcf_reader.format_metaheaders.items()):
+            for regex in specified_regex:
+                if re.match(regex, tag):
+                    regexes_used.add(regex)
+
+                    if metaheader not in format_tag_distribution[tag]:
+                        format_tag_distribution[tag].append(metaheader)
+
+    ordered_distribution = OrderedDict(sorted(format_tag_distribution.items()))
+
+    unused_regexes = set(specified_regex).difference(regexes_used)
+    if unused_regexes:
+        for unused_regex in unused_regexes:
+            msg = ("In the specified list of regexes {}, the regex [{}] "
+                   "does not match any format tags; this expression may be "
+                   "irrelevant.").format(specified_regex, unused_regex)
+        logger.warning(msg)
+
+    if len(format_tag_distribution)==0:
+        msg = ("The specified format tag regex [{}] would exclude all "
+               "format tags. Review inputs/usage and try again")
+        raise utils.UsageError(msg, specified_regex)
+
+    return ordered_distribution
+
+#TODO: remove
 def _get_format_tags(vcf_readers):
     format_tags = defaultdict(list)
     caller_names = defaultdict(list)
@@ -387,23 +451,24 @@ def _get_format_tags(vcf_readers):
     return format_tags
 
 #TODO: rename
-def _disambiguate_format_tags_new(vcf_readers, format_tags):
-    format_tag_mapping = {}
-    for i, vcf_reader in enumerate(vcf_readers):
-        format_tag_mapping[vcf_reader.file_name] = {}
-        for tag, metaheaders in list(format_tags.items()):
-            if tag in vcf_reader.format_metaheaders:
-                if len(metaheaders) > 1:
-                    new_tag = "JX{}_{}".format(i+1, tag)
-                    metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
-                                                r'\g<1>%s' % new_tag,
-                                                metaheaders[i])
-                    format_tag_mapping[vcf_reader.file_name][tag] = metaheader
-                else:
-                    metaheader = metaheaders[0]
-                    format_tag_mapping[vcf_reader.file_name][tag] = metaheader
+def _disambiguate_format_tags_new(format_tag_distribution):
+    count = 0
+    unambiguous_distribution = defaultdict(list)
+    for tag, metaheaders in format_tag_distribution.items():
+        if len(metaheaders) > 1:
+            for metaheader in metaheaders:
+                count += 1
+                new_tag = "JX{}_{}".format(count, tag)
+                metaheader = re.sub(r'(^##FORMAT=.*?[<,]ID=)([^,>]*)',
+                                    r'\g<1>{}'.format(new_tag),
+                                    metaheader)
+                unambiguous_distribution[tag].append(metaheader)
+        else:
+            unambiguous_distribution[tag] = metaheaders
 
-    return format_tag_mapping
+    ordered_distribution = OrderedDict(sorted(unambiguous_distribution.items()))
+
+    return ordered_distribution
 
 #TODO: remove
 def _disambiguate_format_tags(merge_vcf_readers, format_tags):
@@ -462,12 +527,13 @@ def _write_metaheaders(file_writer, all_headers):
     file_writer.write("\n".join(all_headers) + "\n")
 
 def _create_merge_vcf_readers(file_readers, specified_regex):
-    merge_vcf_readers = []
     vcf_readers = [vcf.VcfReader(i) for i in file_readers]
+    format_tag_distribution = _get_format_tag_distribution(vcf_readers,
+                                                           specified_regex)
+    format_tag_mapping = _disambiguate_format_tags_new(format_tag_distribution)
 
-    format_tags = _get_format_tags(vcf_readers)
-#     format_tag_mapping = _disambiguate_format_tags_new(vcf_readers,
-#                                                        format_tags)
+    merge_vcf_readers = []
+
     for file_reader in file_readers:
         merge_vcf_reader = MergeVcfReader(file_reader, specified_regex)
         merge_vcf_readers.append(merge_vcf_reader)
@@ -773,9 +839,11 @@ def _get_format_tag_regex(args):
         raise utils.UsageError(msg)
 
     if args.include_all:
-        format_tag_regex = '.*'
+        format_tag_regex = ['.*']
+    elif args.tags:
+        format_tag_regex = args.tags.split(",")
     else:
-        format_tag_regex = args.tags
+        format_tag_regex = _DEFAULT_INCLUDED_FORMAT_TAGS
 
     return format_tag_regex
 
