@@ -82,7 +82,7 @@ class MergeVcfReaderTestCase(test_case.JacquardBaseTestCase):
         mock_file_reader = MockFileReader("my_dir/my_file.txt", file_contents)
 
         self.assertRaisesRegexp(utils.UsageError,
-                                "The specified format tag regex \[.*\] would exclude all format tags. Review inputs/usage and try again",
+                                r"The specified format tag regex \[.*\] would exclude all format tags. Review inputs/usage and try again",
                                 merge.MergeVcfReader,
                                 mock_file_reader,
                                 "FOO.*")
@@ -819,7 +819,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|15|87")]
         mock_file_reader1 = MockFileReader("fileA.txt", file_contents1)
         merge_vcf_reader1 = merge.MergeVcfReader(mock_file_reader1, "DP")
- 
+
         file_contents2 = ["##metaheader1\n",
                           "##jacquard.translate.caller=VarScan",
                           '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">\n',
@@ -827,7 +827,7 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                           self.entab("chr2|1|.|A|C|.|.|INFO|DP|75|65")]
         mock_file_reader2 = MockFileReader("fileB.txt", file_contents2)
         merge_vcf_reader2 = merge.MergeVcfReader(mock_file_reader2, "DP")
- 
+
         format_tags = {"DP": ['##FORMAT=<ID=DP,Number=1,Type=Integer,Description="[MuTect]: Read Depth">',
                               '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="[VarScan]: Read Depth">']}
 

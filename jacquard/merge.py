@@ -114,7 +114,7 @@ class MergeVcfReader(vcf.VcfReader):
         format_tag_list = []
         regexes_used = set()
 
-        for tag in self.format_metaheaders: 
+        for tag in self.format_metaheaders:
             for regex in self.format_tag_regexes:
                 if re.match(regex, tag):
                     format_tag_list.append(tag)
@@ -126,14 +126,15 @@ class MergeVcfReader(vcf.VcfReader):
             for unused_regex in unused_regexes:
                 msg = ("In the specified list of regexes {}, the regex [{}] "
                        "does not match any format tags; this expression may be "
-                       "irrelevant.")
-            logger.warning(msg, self.format_tag_regexes, unused_regex)
+                       "irrelevant.").format(self.format_tag_regexes,
+                                             unused_regex)
+            logger.warning(msg)
 
         if len(format_tag_list)==0:
             msg = ("The specified format tag regex [{}] would exclude all "
                    "format tags. Review inputs/usage and try again")
             raise utils.UsageError(msg, self.format_tag_regexes)
-                       
+
         return sorted(format_tag_list)
 
     def _get_metaheader_subset(self):
@@ -236,6 +237,7 @@ class _Filter(object):
                              "at_least_one_somatic": _Filter.\
                                                     _include_row_if_any_somatic}
         self._args = args
+
         if args.include_all and (args.include_cells or args.include_rows):
             msg = ('Unable to process command-line arguments. Neither '
                    '--include_cells nor --include_rows can be specified if '
@@ -718,14 +720,14 @@ def _validate_consistent_input(vcf_readers, include_all):
         untranslated_readers = []
         translated = False
         untranslated = False
-    
+
         for vcf_reader in vcf_readers:
             if '##jacquard.translate.caller' in vcf_reader.metaheaders:
                 translated = True
             else:
                 untranslated = True
                 untranslated_readers.append(vcf_reader)
-    
+
         if translated and untranslated:
             msg = ("Some input VCFs [{}] were not translated by Jacquard. "
                    "Review input and/or use --included_all flag")
@@ -811,7 +813,7 @@ def add_subparser(subparser):
     parser.add_argument("--force", action='store_true', help="Overwrite contents of output directory")
     parser.add_argument("--log_file", help="Log file destination", metavar="")
     parser.add_argument("-v", "--verbose", action='store_true')
-    
+
 def _predict_output(args):
     desired_output_files = set([os.path.basename(args.output)])
 
@@ -844,7 +846,8 @@ def execute(args, execution_context):
 #and _build_contigs behave differently. It seems like we could make the
 #signatures of these methods more similar or even combine some methods to
 #reduce excess iterations over the coordinates/vcf_readers
-        merge_vcf_readers = _create_merge_vcf_readers(file_readers, format_tag_regex)
+        merge_vcf_readers = _create_merge_vcf_readers(file_readers,
+                                                      format_tag_regex)
         _validate_consistent_input(merge_vcf_readers, args.include_all)
         _validate_consistent_samples(merge_vcf_readers)
         merge_vcf_readers = _sort_readers(merge_vcf_readers,
