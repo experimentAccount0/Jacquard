@@ -31,37 +31,96 @@ class MockBufferedReader(object):
 class TagRegistryTestCase(test_case.JacquardBaseTestCase):
     def test_register_tag(self):
         registry = merge.TagRegistry()
-        actual_tag_id = registry.register_tag('DP',
-                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##FORMAT=<ID=DP,Description="thing1">')
         self.assertEquals("JX1_DP", actual_tag_id)
 
-        actual_tag_id = registry.register_tag('AF',
-                                              '##FORMAT=<ID=AF,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##FORMAT=<ID=AF,Description="thing1">')
 
         self.assertEquals("JX2_AF", actual_tag_id)
 
     def test_register_tag_returnsPreviousTagId(self):
         registry = merge.TagRegistry()
-        actual_tag_id = registry.register_tag('DP',
-                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##FORMAT=<ID=DP,Description="thing1">')
         self.assertEquals("JX1_DP", actual_tag_id)
 
-        actual_tag_id = registry.register_tag('DP',
-                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##FORMAT=<ID=DP,Description="thing1">')
 
         self.assertEquals("JX1_DP", actual_tag_id)
 
     def test_register_tag_passthroughJacquardTags(self):
         registry = merge.TagRegistry()
-        actual_tag_id = registry.register_tag('JQ_AF_XX',
-                                              '##FORMAT=<ID=DP,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##FORMAT=<ID=JQ_AF_XX,Description="thing1">')
         self.assertEquals("JQ_AF_XX", actual_tag_id)
 
     def test_register_tag_passthroughNonFormatTags(self):
         registry = merge.TagRegistry()
-        actual_tag_id = registry.register_tag('FOO',
-                                              '##INFO=<ID=FOO,Descrpition="thing1">')
+        actual_tag_id = registry.register_tag('##INFO=<ID=FOO,Description="thing1">')
         self.assertEquals("FOO", actual_tag_id)
+
+    def test_get_disambiguated_metaheader(self):
+        registry = merge.TagRegistry()
+        original_metaheader = '##FORMAT=<ID=DP,Description="thing1">'
+        registry.register_tag(original_metaheader)
+        actual_metaheader = registry.get_disambiguated_metaheader(original_metaheader)
+
+        self.assertEquals('##FORMAT=<ID=JX1_DP,Description="thing1">',
+                          actual_metaheader)
+
+    def test_get_disambiguated_metaheader_onlyReplacesIdField(self):
+        registry = merge.TagRegistry()
+        original_metaheader = '##FORMAT=<Description="SAFE",ID=AF>'
+        registry.register_tag(original_metaheader)
+        actual_metaheader = registry.get_disambiguated_metaheader(original_metaheader)
+
+        self.assertEquals('##FORMAT=<Description="SAFE",ID=JX1_AF>',
+                          actual_metaheader)
+
+    def test_get_disambiguated_metaheader_passthroughNovelMetaheader(self):
+        registry = merge.TagRegistry()
+        original_metaheader = '##FORMAT=<ID=DP,Description="thing1">'
+        actual_metaheader = registry.get_disambiguated_metaheader(original_metaheader)
+
+        self.assertEquals(original_metaheader, actual_metaheader)
+
+    def test_get_disambiguated_tag_values_basic(self):
+        sample_tag_values = {"sampleA" : {'DP':42}}
+        input_tag_metaheaders = {'DP':'##FORMAT=<ID=DP,Description="Foo"'}
+        registry = merge.TagRegistry()
+        registry.register_tag(input_tag_metaheaders['DP'])
+
+        actual_tag_values = registry.get_disambiguated_tag_values(sample_tag_values,
+                                                                  input_tag_metaheaders)
+
+        self.assertEquals({"sampleA" : {'JX1_DP':42}}, actual_tag_values)
+
+    def test_get_disambiguated_tag_values_advanced(self):
+        input_tag_values = {"sampleA" : {'DP':42, 'AF':0.5}}
+        readerA_tag_metaheaders = {'DP':'##FORMAT=<ID=DP,Description="A"',
+                                   'AF':'##FORMAT=<ID=AF,Description="A"'}
+        readerB_tag_metaheaders = {'DP':'##FORMAT=<ID=DP,Description="B"',
+                                   'AF':'##FORMAT=<ID=AF,Description="B"'}
+        registry = merge.TagRegistry()
+        registry.register_tag(readerA_tag_metaheaders['AF'])
+        registry.register_tag(readerA_tag_metaheaders['DP'])
+        registry.register_tag(readerB_tag_metaheaders['AF'])
+        registry.register_tag(readerB_tag_metaheaders['DP'])
+
+        readerA_actual_tag_values = registry.get_disambiguated_tag_values(input_tag_values,
+                                                                          readerA_tag_metaheaders)
+        readerB_actual_tag_values = registry.get_disambiguated_tag_values(input_tag_values,
+                                                                          readerB_tag_metaheaders)
+
+        self.assertEquals({"sampleA" : {'JX1_AF':0.5, 'JX2_DP':42}}, readerA_actual_tag_values)
+        self.assertEquals({"sampleA" : {'JX3_AF':0.5, 'JX4_DP':42}}, readerB_actual_tag_values)
+
+    def test_get_disambiguated_tag_values_passthroughJacquardTags(self):
+        input_tag_values = {"sampleA" : {'JQ_XX_YY':42}}
+        tag_metaheaders = {'JQ_XX_YY':'##FORMAT=<ID=DP,Description="A"'}
+        registry = merge.TagRegistry()
+        actual_tag_values = registry.get_disambiguated_tag_values(input_tag_values,
+                                                                  tag_metaheaders)
+
+        self.assertEquals({"sampleA" : {'JQ_XX_YY':42}}, actual_tag_values)
 
 
 #TODO: rename

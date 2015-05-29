@@ -38,7 +38,7 @@ import natsort
 
 import jacquard.utils.logger as logger
 import jacquard.utils.utils as utils
-from jacquard.utils.vcf import FileWriter
+from jacquard.utils.vcf import FileWriter, VcfReader
 import jacquard.utils.vcf as vcf
 
 
@@ -99,7 +99,7 @@ class _BufferedReader(object):
 
 class TagRegistry(object):
     def __init__(self):
-        self.metaheaders = {}
+        self.metaheaders_to_tag_id = {}
 
 
     @staticmethod
@@ -107,16 +107,38 @@ class TagRegistry(object):
         return tag_id.startswith('JQ_') or \
                    not metaheader.startswith('##FORMAT=<')
 
-    def register_tag(self, tag_id, metaheader):
+    def register_tag(self, metaheader):
+        tag_id = vcf.VcfReader.get_id_from_metaheader(metaheader)
         if self._passthrough(tag_id, metaheader):
             new_tag_id = tag_id
         else:
-            if metaheader not in self.metaheaders:
-                new_tag = 'JX{}_{}'.format(len(self.metaheaders) + 1, tag_id)
-                self.metaheaders[metaheader] = new_tag
+            if metaheader not in self.metaheaders_to_tag_id:
+                new_tag = 'JX{}_{}'.format(len(self.metaheaders_to_tag_id) + 1,
+                                           tag_id)
+                self.metaheaders_to_tag_id[metaheader] = new_tag
 
-            new_tag_id = self.metaheaders[metaheader]
+            new_tag_id = self.metaheaders_to_tag_id[metaheader]
         return new_tag_id
+
+    def get_disambiguated_metaheader(self, metaheader):
+        if metaheader in self.metaheaders_to_tag_id:
+            new_tag_id = self.metaheaders_to_tag_id[metaheader]
+            original_tag_id = VcfReader.get_id_from_metaheader(metaheader)
+            return metaheader.replace("ID=" + original_tag_id,
+                                  "ID=" + new_tag_id)
+        else:
+            return metaheader
+    
+    def get_disambiguated_tag_values(self, sample_tag_values, tag_metaheaders):
+        new_sample_tag_values = {}
+        for sample, tag_values in sample_tag_values.items():
+            new_tag_values = {}
+            for tag_id, value in tag_values.items():
+                metaheader = tag_metaheaders[tag_id]
+                new_tag_id = self.metaheaders_to_tag_id.get(metaheader, tag_id)
+                new_tag_values[new_tag_id] = value
+            new_sample_tag_values[sample] = new_tag_values
+        return new_sample_tag_values
 
 
 class NewMergeVcfReader(vcf.VcfReader):
