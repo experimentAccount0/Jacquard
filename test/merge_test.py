@@ -949,9 +949,10 @@ class MergeTestCase(test_case.JacquardBaseTestCase):
                                                                "JQ_GT": ['##FORMAT=<ID=JQ_GT,Number=1,Type=Integer,Description="Genotype>']}.items()))
 
         self.assertEquals(expected_format_tag_distribution, format_tag_distribution)
-        self.assertEquals("JQ_AF", format_tag_distribution.keys()[0])
-        self.assertEquals("JQ_DP", format_tag_distribution.keys()[1])
-        self.assertEquals("JQ_GT", format_tag_distribution.keys()[2])
+        tags = list(format_tag_distribution.keys())
+        self.assertEquals("JQ_AF", tags[0])
+        self.assertEquals("JQ_DP", tags[1])
+        self.assertEquals("JQ_GT", tags[2])
 
     def test_get_format_tag_distribution_onlyKeepsTagsMatchingRegex(self):
         file_contents1 = ["##metaheader1\n",
